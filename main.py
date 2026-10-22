@@ -7,8 +7,9 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import relationship
 from flask_login import UserMixin, login_user, LoginManager, login_required, current_user, logout_user
 from forms import CreatePostForm,RegisterForm,LoginForm, CommentForm
-from flask_gravatar import Gravatar
 from functools import wraps
+from hashlib import md5
+from urllib.parse import urlencode
 
 
 app = Flask(__name__)
@@ -16,7 +17,14 @@ app.config['SECRET_KEY'] = 'YOUR SECRET KEY'
 ckeditor = CKEditor(app)
 Bootstrap(app)
 
-gravatar = Gravatar(app, size=100, rating="g", default="retro", force_default=False, force_lower=False, use_ssl=False, base_url=None)
+
+# Flask-Gravatar (last release 0.5.0) imports `flask._request_ctx_stack`, removed in Flask 2.3,
+# so the `gravatar` template filter is provided here with the same settings as before.
+@app.template_filter("gravatar")
+def gravatar(email, size=100, rating="g", default="retro"):
+    email_hash = md5(email.strip().lower().encode("utf-8")).hexdigest()
+    query = urlencode({"s": size, "d": default, "r": rating})
+    return f"https://www.gravatar.com/avatar/{email_hash}?{query}"
 
 ##CONNECT TO DB
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///blog.db'
@@ -28,7 +36,7 @@ login_manager.init_app(app)
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))
 
 def admin_only(f):
     @wraps(f)
@@ -73,7 +81,8 @@ class Comment(db.Model):
 
 
 
-db.create_all()
+with app.app_context():
+    db.create_all()
 
 
 @app.route('/')
@@ -133,7 +142,7 @@ def login():
 def show_post(post_id):
     comment_form = CommentForm()
     comments = Comment.query.all()
-    requested_post = BlogPost.query.get(post_id)
+    requested_post = db.session.get(BlogPost, post_id)
 
     if comment_form.validate_on_submit():
         if not current_user.is_authenticated:
@@ -183,7 +192,7 @@ def add_new_post():
 @app.route("/edit-post/<int:post_id>")
 @admin_only
 def edit_post(post_id):
-    post = BlogPost.query.get(post_id)
+    post = db.session.get(BlogPost, post_id)
     edit_form = CreatePostForm(
         title=post.title,
         subtitle=post.subtitle,
@@ -206,7 +215,7 @@ def edit_post(post_id):
 @app.route("/delete/<int:post_id>")
 @admin_only
 def delete_post(post_id):
-    post_to_delete = BlogPost.query.get(post_id)
+    post_to_delete = db.session.get(BlogPost, post_id)
     db.session.delete(post_to_delete)
     db.session.commit()
     return redirect(url_for('get_all_posts'))
